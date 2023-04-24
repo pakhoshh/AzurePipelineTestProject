@@ -7,8 +7,8 @@ trigger:
 - master
 
 pool:
-  vmImage: none
-
+  name: 'default'
+  vmImage: 'AKE-HMKSLT2'
 steps:
 - script: echo Hello, world!
   displayName: 'Run a one-line script'
