@@ -1,19 +1,249 @@
-# Starter pipeline
-# Start with a minimal pipeline that you can customize to build and deploy your code.
-# Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
+# resources:
+#   repositories:
+#     - repository: DWH_0102_Github #The name used to reference this repository in the checkout step
+#       type: github
+#       ref: '${{parameters.branch_name}}'
+#       endpoint: cicd-github
+#       name: Akelius/DWH_0102
+
+#     - repository: DWH_0101_Github #The name used to reference this repository in the checkout step
+#       type: github
+#       endpoint: cicd-github
+#       name: Akelius/DWH_0101
+
+
+parameters:
+- name: repoName
+  displayName: Select the repository name
+  values:
+    - DWH_0101
+    - DWH_0102
+    - DWH_0201
+    - DWH_0202
+    - DWH_0301
+
+- name: branch_name
+  displayName: Please specify your branch name
+  type:  string
+
+- name: envParamName
+  displayName: Seclect the environment name
+  values:
+    - Prod
+    - Dev         #''
+    - Rene        #01
+    - Laura       #02
+    - Srivalli    #03
+    - Ronald      #04
+    - Phucci      #05
+    - Payam       #06
+  default:  Dev
+
+- name:  RestoreBackups
+  displayName: Do you want to restore backups from production?
+  values:
+    - YES
+    - NO
+  default: NO
+
+variables:
+
+  projectID:  'RSB'
+  serverName: 'rsb-staging.westeurope.cloudapp.azure.com\\\\RSB-staging-VM,1433'
+  UserName : 'CICD_Staging'
+  Token : ''
 
 trigger:
-- master
+- none
 
-pool:
-  name: 'default'
-  vmImage: 'windows-latest'
-steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
+stages:
+  - stage: Build
 
-- script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+    displayName: Build Stage
+
+    pool:
+          vmImage: 'windows-2019'
+
+    jobs:
+      - job: Building
+        displayName: Build dacpac files for ${{parameters.repoName}} repository
+
+        steps:
+          - script : echo $(Build.QueuedBy)
+          - task: Bash@3
+            inputs:
+              targetType: 'inline'
+              script: |
+                if [ "$(Build.QueuedBy)"="Payam Khoshhal" ]; then
+                  echo "##vso[task.setvariable variable=Token]$(PayamGithubToken)"
+                fi
+            displayName: Get the executer Github token
+
+#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
+
+          - script: |
+              git clone https://$(Token)@github.com/Akelius/${{parameters.repoName}}.git  $(agent.builddirectory)\${{parameters.repoName}}
+              cd $(agent.builddirectory)\${{parameters.repoName}}
+              git checkout origin/${{parameters.branch_name}}
+            displayName: Checkout to ${{parameters.repoName}}
+
+          - checkout: self
+            displayName: checkout to RSB
+
+          #- checkout: ${{parameters.repoName}}_Github
+          #  displayName: Checkout to ${{parameters.repoName}}
+
+          - task: MSBuild@1
+            inputs:
+              #solution: '**/*.sqlproj'
+              solution : $(agent.builddirectory)\${{parameters.repoName}}\**\*.sqlproj
+              maximumCpuCount: true
+            displayName: Building the projects
+
+          - task: CopyFiles@2
+            inputs:
+              SourceFolder: '$(agent.builddirectory)\${{parameters.repoName}}'
+              Contents: '**'
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+            displayName: Copy ${{parameters.repoName}} artifacts
+
+          # - task: CopyFiles@2
+          #   inputs:
+          #     SourceFolder: '$(agent.builddirectory)\s'
+          #     Contents: 'Dockerfile'
+          #     TargetFolder: '$(Build.ArtifactStagingDirectory)\RSB'
+          #   displayName: Copy RSB artifacts
+
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: ${{parameters.repoName}}
+              publishLocation: 'Container'
+            displayName: Publishing all artifacts
+
+  - stage: Deploy
+    displayName: Deploy the dacpac files with Dockerfile
+    dependsOn: Build
+
+    pool:
+      name: 'RSB'
+      #vmImage: 'rsb-init'
+
+    jobs:
+      - job: deploy
+        steps:
+          
+          - task: AzureKeyVault@2
+            inputs:
+              azureSubscription: 'non-production-cicd-azure'
+              KeyVaultName: 'rsb-staging-disk-kv'
+              SecretsFilter: 'CICD'
+              RunAsPreJob: true
+            displayName: Get the password from AzureKeyVault
+
+
+          - checkout: self
+            displayName: Checkout to RSB
+
+          - task: DownloadBuildArtifacts@1
+            inputs:
+              buildType: 'current'
+              downloadType: 'specific'
+              itemPattern: '**/*'
+              downloadPath: '$(System.defaultworkingdirectory)'
+            displayName: Download artifacts to Linux rsb-init
+
+          # - checkout: ${{parameters.repoName}}_Github
+          #   displayName: Checkout to ${{parameters.repoName}}
+
+          - task: Bash@3
+            inputs:
+              targetType: 'inline'
+              script: |
+                if [ "${{parameters.envParamName}}" = "Rene" ]; then
+                  echo "##vso[task.setvariable variable=envSecond]01"
+                elif [ "${{parameters.envParamName}}" = "Laura" ]; then
+                  echo "##vso[task.setvariable variable=envSecond]02"
+                elif [ "${{parameters.envParamName}}" = "Srivalli" ]; then
+                  echo "##vso[task.setvariable variable=envSecond]03"
+                elif [ "${{parameters.envParamName}}" = "Ronald" ]; then
+                  echo "##vso[task.setvariable variable=envSecond]04"
+                elif [ "${{parameters.envParamName}}" = "Phucci" ]; then
+                  echo "##vso[task.setvariable variable=envSecond]05"
+                elif [ "${{parameters.envParamName}}" = "Payam" ]; then
+                  echo "##vso[task.setvariable variable=envSecond]06"
+                fi
+            displayName: Set the environment for deploying
+
+          - script: |
+                ls $(System.defaultworkingdirectory)/DWH_0102/schema_migrations/
+                echo '--------------------------------------'
+                ls $(System.defaultworkingdirectory)/DWH_0102/gdw_meta/
+
+          - script: |
+                cp -R $(System.defaultworkingdirectory)/DWH_0102/schema_migrations/* /$(System.defaultworkingdirectory)/
+                ls $(System.defaultworkingdirectory)
+
+
+          - script: |
+                find . -name "*.dacpac" -exec cp {} '$(System.defaultworkingdirectory)/' \;
+                find . -name "*.publish.xml" -exec cp {} '$(System.defaultworkingdirectory)/' \;
+            displayName: Copying all the dacpac and publish profile files to root
+
+          - script: |
+              STR=${{parameters.repoName}}
+              if [ "${{parameters.envParamName}}" = "Dev" ]; then
+                echo "##vso[task.setvariable variable=fullEnv_Id]${STR:4:4}_"
+              elif [ "${{parameters.envParamName}}" = "Prod" ]; then
+                echo "##vso[task.setvariable variable=fullEnv_Id]${STR:4:4}_"
+              else
+                echo "##vso[task.setvariable variable=fullEnv_Id]${STR:4:4}$(envSecond)_"
+              fi
+            displayName: Generate environmentId eg, "010201" or "0102"
+
+          # - script: |
+          #     files=$(find $(System.defaultworkingdirectory)/RSB/. -name "*.dacpac")
+          #     for file in $files;
+          #     do
+          #     base=$(basename "$file" .dacpac);
+          #     newname=$(echo "$(fullEnv_Id)${base}.dacpac");
+          #     mv "$file" "$(System.defaultworkingdirectory)/RSB/$newname"; 
+          #     done
+          #   displayName: Rename dacpac filesname
+
+
+          - task: Bash@3
+            inputs:
+              targetType: 'inline'
+              script: |
+                files=$(find $(System.defaultworkingdirectory)/. -name "*.publish.xml")
+                for file in $files;
+                do
+                sed -i "s#<TargetDatabaseName>#<TargetDatabaseName>$(fullEnv_Id)#g" $file
+                sed -i "s#<Value>#<Value>$(fullEnv_Id)#g" $file
+                cat $file
+                done
+                ls $(System.defaultworkingdirectory)/
+                cat $(System.defaultworkingdirectory)/gdw.publish.xml
+                mkdir $(System.defaultworkingdirectory)/newfolderdefault 
+                touch $(System.defaultworkingdirectory)/newfolderdefault/alaki.txt
+            displayName: Modifying the publish.xml files
+
+          - task: Bash@3
+            inputs:
+              targetType: 'inline'
+              script: |
+                        sed -i "s|##SERVER_NAME##|$(serverName)|g" $(System.defaultworkingdirectory)/Dockerfile
+                        sed -i "s|##ENV_ID##|$(fullEnv_Id)|g" $(System.defaultworkingdirectory)/Dockerfile
+            displayName: Modifiying the Dockerfile
+
+          - task: Docker@2
+            inputs:
+              containerRegistry: 'cicd-buildsystem-container-registry'
+              repository: 'devops/mssql2019'
+              command: 'build'
+              Dockerfile: '$(System.defaultworkingdirectory)/Dockerfile'
+              tags: 'latest'
+              arguments: '--build-arg RestoreBackups=${{parameters.RestoreBackups}} --build-arg UserName=$(UserName) --build-arg Password=$(CICD)'
+            displayName: Deploy ${{parameters.repoName}} to ${{parameters.envParamName}} environment
+
